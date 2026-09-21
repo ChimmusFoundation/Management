@@ -47,26 +47,39 @@ def render_stats():
     money_b      = box_lines("MONEY",      f"${state['money']:,}",     W)
     happiness_b  = box_lines("HAPPINESS",  f"{state['happiness']}%",   W)
     population_b = box_lines("POPULATION", f"{state['population']:,}", W)
-    # GDP box gets an extra line showing income per turn
-    gdp_b        = box_lines_two(
-        "GDP",
-        f"${state['gdp']:,}",
-        f"+${income_per_turn():,} / turn",
-        W
-    )
+    # GDP box: show income per turn, and happiness bonus if active
+    overflow = max(0, state["happiness"] - 100)
+    if overflow > 0:
+        bonus_pct = overflow * 0.5
+        gdp_b = box_lines(
+            "GDP",
+            f"${state['gdp']:,}",
+            W
+        )
+        # insert two extra lines before the closing +---+
+        inner = W - 2
+        line_income = "|" + f"+${income_per_turn():,} / turn".center(inner) + "|"
+        line_bonus  = "|" + f"{bonus_pct:.0f}% boost (happiness)".center(inner) + "|"
+        gdp_b = gdp_b[:-1] + [line_income, line_bonus, gdp_b[-1]]
+    else:
+        gdp_b = box_lines_two(
+            "GDP",
+            f"${state['gdp']:,}",
+            f"+${income_per_turn():,} / turn",
+            W
+        )
 
     print()
-    # Row 1: money | happiness  (same height, 4 lines each)
+    # Row 1: money | happiness
     for l, r in zip(money_b, happiness_b):
         print(f"  {l}{gap}{r}")
     print()
-    # Row 2: population | gdp  (gdp is 5 lines, pad population)
-    pop_padded = population_b[:3] + [population_b[2].replace(
-        f"{state['population']:,}".center(W - 2), " " * (W - 2)
-    )] + [population_b[3]]
-    # simpler: just zip and let gdp drive
-    pop_lines = population_b[:-1] + ["|" + " " * (W - 2) + "|"] + [population_b[-1]]
-    for l, r in zip(pop_lines, gdp_b):
+    # Row 2: population | gdp — pad population to match gdp height
+    inner = W - 2
+    blank = "|" + " " * inner + "|"
+    while len(population_b) < len(gdp_b):
+        population_b.insert(-1, blank)  # insert blank rows before closing +
+    for l, r in zip(population_b, gdp_b):
         print(f"  {l}{gap}{r}")
     print()
 
@@ -508,12 +521,22 @@ def next_event():
 def apply_outcome(outcome):
     for key, delta in outcome.items():
         state[key] = max(0, state[key] + delta)
-    state["happiness"]  = max(0, min(100, state["happiness"]))
+    state["happiness"]  = max(0, min(200, state["happiness"]))
     state["population"] = max(0, state["population"])
+
+def happiness_gdp_bonus():
+    """Every 1% of happiness above 100 adds 0.5% to GDP each turn."""
+    overflow = max(0, state["happiness"] - 100)
+    if overflow > 0:
+        bonus = int(state["gdp"] * (overflow * 0.005))
+        state["gdp"] += bonus
+        return bonus
+    return 0
 
 def passive_turn_effects():
     gdp_growth = int(state["gdp"] * 0.01)
     state["gdp"] += gdp_growth
+    happiness_gdp_bonus()
     state["money"] += income_per_turn()
 
 def tick_investments():
