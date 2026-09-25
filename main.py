@@ -10,11 +10,57 @@ state = {
     "gdp":        25000,
     "interest_rate": 4.35,
     "fiscal_policy": "Balanced",
+    "minimum_wage": 24.10,
+    "tax_rate": 5.0,
     "career_level": 0,
 }
 
 pending_investments = []   # delayed payoff queue
 event_pool          = []   # shuffled event queue, refilled when empty
+election = {
+    "active": False,
+    "resolved": True,
+    "candidates": [],
+    "message": "",
+}
+
+COMPETITOR_NAMES = [
+    "Samantha Reid", "Liam Walker", "Grace Nguyen", "Oliver Hart",
+    "Mia Thompson", "Noah Bennett", "Chloe Martin", "Ethan Brooks",
+]
+
+PARTY_ADJECTIVES = {
+    "Awesome": "Miserable",
+    "Brave": "Cowardly",
+    "Clever": "Foolish",
+    "Fearless": "Timid",
+    "Mighty": "Feeble",
+    "Powerful": "Weak",
+    "Radiant": "Dreary",
+    "Swift": "Sluggish",
+    "Valiant": "Fainthearted",
+    "Wise": "Foolish",
+}
+PARTY_GROUPS = {
+    "Monkeys": "Baboons",
+    "Humans": "Cyborgs",
+    "Knights": "Bandits",
+    "Druids": "Destroyers",
+    "Rangers": "Raiders",
+    "Bards": "Bores",
+    "Alchemists": "Saboteurs",
+    "Wardens": "Invaders",
+    "Sages": "Fools",
+    "Guardians": "Oppressors",
+}
+
+def generate_party():
+    adjective = random.choice(list(PARTY_ADJECTIVES))
+    group = random.choice(list(PARTY_GROUPS))
+    return {
+        "party": f"{adjective} {group}",
+        "opposition": f"{PARTY_ADJECTIVES[adjective]} {PARTY_GROUPS[group]}",
+    }
 
 CAREER_LEVELS = [
     ("Local Councillor", 1, 0),
@@ -26,6 +72,8 @@ CAREER_LEVELS = [
     ("Federal Minister", 28, 70),
     ("Prime Minister", 36, 75),
 ]
+
+party_details = generate_party()
 
 profile = {
     "name": random.choice([
@@ -46,12 +94,54 @@ profile = {
         "North District", "Coastal Territory", "River State",
         "Western Region", "Central Province",
     ]),
+    "party": party_details["party"],
+    "opposition": party_details["opposition"],
 }
 
 # ── INCOME CALCULATION ───────────────────────────────────────────────────────
 def income_per_turn():
     """Tax income earned each turn from GDP."""
-    return int(state["gdp"] * 0.05)
+    return int(state["gdp"] * state["tax_rate"] / 100)
+
+def open_election_if_due():
+    """Open an election every 100 turns once the player has begun governing."""
+    if state["turn"] > 1 and state["turn"] % 100 == 0 and election["resolved"]:
+        election["active"] = True
+        election["resolved"] = False
+        election["candidates"] = random.sample(COMPETITOR_NAMES, 3)
+        election["message"] = (
+            f"The {current_office()} election is underway. "
+            "Choose whether to stand against the challengers."
+        )
+
+def resolve_election(run):
+    if not election["active"] or election["resolved"]:
+        return None
+    if not run:
+        election["active"] = False
+        election["resolved"] = True
+        election["message"] = "You did not nominate. A rival will hold the office."
+        state["happiness"] = max(0, state["happiness"] - 2)
+        return election["message"]
+    chance = 0.35 + min(0.45, state["happiness"] / 200)
+    chance += max(-0.12, min(0.12, (state["tax_rate"] - 5.0) * -0.01))
+    chance += max(-0.08, min(0.08, (state["minimum_wage"] - 24.10) * 0.01))
+    won = random.random() < chance
+    election["active"] = False
+    election["resolved"] = True
+    if won:
+        election["message"] = (
+            f"You won the {current_office()} election with "
+            f"{round(chance * 100)}% estimated support."
+        )
+        state["happiness"] = min(200, state["happiness"] + 5)
+    else:
+        election["message"] = (
+            f"You lost the {current_office()} election. "
+            "The strongest challenger takes office."
+        )
+        state["happiness"] = max(0, state["happiness"] - 12)
+    return election["message"]
 
 def current_office():
     return CAREER_LEVELS[state["career_level"]][0]
@@ -555,6 +645,37 @@ EVENTS = [
         ],
     },
 
+    # ── AL MERQAEDES ─────────────────────────────────────────────────────────
+    {
+        "id": "al_merqaedes",
+        "description": [
+            "Al Merqaedes, a high-profile community leader, has",
+            "launched a public campaign calling for practical reform.",
+            "They want a direct meeting with your government and a",
+            "fund for local projects that residents can vote on.",
+        ],
+        "options": [
+            {
+                "label": "Fund the community plan (-$1,500 | +8 happiness | +25 population)",
+                "outcome": {"money": -1500, "happiness": +8, "population": +25},
+                "message": "Al Merqaedes' plan is funded. Residents begin choosing projects.",
+                "effects": ["Money:      -$1,500", "Happiness:  +8%", "Population: +25"],
+            },
+            {
+                "label": "Invite them to Parliament (+$0 | +3 happiness)",
+                "outcome": {"happiness": +3},
+                "message": "The meeting is productive, but the promised fund is delayed.",
+                "effects": ["Money:      no change", "Happiness:  +3%"],
+            },
+            {
+                "label": "Dismiss the campaign (+$0 | -8 happiness | -20 population)",
+                "outcome": {"happiness": -8, "population": -20},
+                "message": "The campaign grows louder as residents feel ignored.",
+                "effects": ["Money:      no change", "Happiness:  -8%", "Population: -20"],
+            },
+        ],
+    },
+
 ]
 
 # ── EVENT QUEUE ───────────────────────────────────────────────────────────────
@@ -594,6 +715,9 @@ def passive_turn_effects():
         state["money"] += 650
         state["gdp"] -= int(state["gdp"] * 0.004)
         state["happiness"] -= 2
+    wage_pressure = state["minimum_wage"] - 24.10
+    state["money"] -= int(max(0, wage_pressure) * state["population"] * 0.02)
+    state["happiness"] += int(max(-5, min(5, wage_pressure * 0.25)))
     state["gdp"] += gdp_growth
     happiness_gdp_bonus()
     state["money"] += income_per_turn()
@@ -654,6 +778,12 @@ def cli_main():
         render_header()
         render_stats()
         render_pending_investments()
+        open_election_if_due()
+        election_run = True
+        if election["active"]:
+            print(f"\n  ELECTION: {election['message']}")
+            print("  Competitors: " + ", ".join(election["candidates"]))
+            election_run = input("  Run for election? [Y/n]: ").strip().lower() not in ("n", "no")
 
         if check_game_over():
             input("  Press Enter to quit...")
@@ -677,6 +807,7 @@ def cli_main():
 
         apply_outcome(chosen["outcome"])
         passive_turn_effects()
+        election_result = resolve_election(run=election_run) if election["active"] else None
         state["turn"] += 1
         promoted_to = advance_career()
 
@@ -685,6 +816,8 @@ def cli_main():
         render_stats()
         if promoted_to:
             print(f"  PROMOTION: You are now {promoted_to}.")
+        if election_result:
+            print(f"  ELECTION: {election_result}")
         render_outcome(chosen["message"], chosen["effects"])
 
         input("  Press Enter to continue to next turn...")
@@ -729,6 +862,8 @@ class ManagementApp:
             "office": tk.StringVar(),
             "rate": tk.StringVar(),
             "fiscal": tk.StringVar(),
+            "wage": tk.StringVar(),
+            "tax": tk.StringVar(),
         }
 
         self._build_shell()
@@ -756,12 +891,14 @@ class ManagementApp:
         self.dashboard = ttk.Frame(self.notebook, padding=20)
         self.events_tab = ttk.Frame(self.notebook, padding=20)
         self.policies_tab = ttk.Frame(self.notebook, padding=20)
+        self.elections_tab = ttk.Frame(self.notebook, padding=20)
         self.investments_tab = ttk.Frame(self.notebook, padding=20)
         self.history_tab = ttk.Frame(self.notebook, padding=20)
         self.profile_tab = ttk.Frame(self.notebook, padding=20)
         self.notebook.add(self.dashboard, text="Dashboard")
         self.notebook.add(self.events_tab, text="Events")
         self.notebook.add(self.policies_tab, text="Policies")
+        self.notebook.add(self.elections_tab, text="Elections")
         self.notebook.add(self.investments_tab, text="Investments")
         self.notebook.add(self.history_tab, text="History")
         self.notebook.add(self.profile_tab, text="Profile")
@@ -769,6 +906,7 @@ class ManagementApp:
         self._build_dashboard()
         self._build_events()
         self._build_policies()
+        self._build_elections()
         self._build_investments()
         self._build_history()
         self._build_profile()
@@ -803,6 +941,9 @@ class ManagementApp:
         ttk.Label(policy_summary, text="Fiscal policy").pack(side="left")
         ttk.Label(policy_summary, textvariable=self.stat_vars["fiscal"],
                   style="StatValue.TLabel").pack(side="left", padx=8)
+        ttk.Label(policy_summary, text="Tax").pack(side="left", padx=(20, 0))
+        ttk.Label(policy_summary, textvariable=self.stat_vars["tax"],
+                  style="StatValue.TLabel").pack(side="left", padx=(8, 0))
 
         self.dashboard_message = ttk.Label(
             self.dashboard, text="Choose an option in the Events tab to govern your state.",
@@ -852,6 +993,25 @@ class ManagementApp:
                 command=lambda selected=policy_name: self._set_fiscal_policy(selected),
             ).pack(side="left", padx=(0, 8))
 
+        settings_box = ttk.Frame(self.policies_tab, style="Card.TFrame", padding=14)
+        settings_box.pack(fill="x", pady=(14, 0))
+        ttk.Label(settings_box, text="Household settings",
+                  font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+        ttk.Label(
+            settings_box,
+            text="Enter valid values: minimum wage $0-$100 per hour, tax rate 0%-60%.",
+        ).pack(anchor="w", pady=6)
+        fields = ttk.Frame(settings_box)
+        fields.pack(anchor="w")
+        self.wage_input = self.tk.StringVar(value=f"{state['minimum_wage']:.2f}")
+        self.tax_input = self.tk.StringVar(value=f"{state['tax_rate']:.2f}")
+        ttk.Label(fields, text="Minimum wage ($/hr)").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(fields, textvariable=self.wage_input, width=12).grid(row=0, column=1, pady=4)
+        ttk.Label(fields, text="Tax rate (%)").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(fields, textvariable=self.tax_input, width=12).grid(row=1, column=1, pady=4)
+        ttk.Button(settings_box, text="Apply settings", command=self._apply_policy_settings).pack(
+            anchor="w", pady=(8, 0))
+
         self.policy_message = ttk.Label(self.policies_tab)
         self.policy_message.pack(anchor="w", pady=16)
 
@@ -864,6 +1024,84 @@ class ManagementApp:
         state["fiscal_policy"] = policy_name
         self._update_stats()
         self.policy_message.configure(text=f"Fiscal policy set to {policy_name}.")
+
+    def _apply_policy_settings(self):
+        try:
+            wage = float(self.wage_input.get())
+            tax = float(self.tax_input.get())
+        except ValueError:
+            self.policy_message.configure(text="Use numbers for minimum wage and tax rate.")
+            return
+        if not 0 <= wage <= 100 or not 0 <= tax <= 60:
+            self.policy_message.configure(
+                text="Invalid settings. Wage must be $0-$100 and tax must be 0%-60%.")
+            return
+        state["minimum_wage"] = round(wage, 2)
+        state["tax_rate"] = round(tax, 2)
+        self.wage_input.set(f"{wage:.2f}")
+        self.tax_input.set(f"{tax:.2f}")
+        self._update_stats()
+        self.policy_message.configure(text="Minimum wage and tax rate applied.")
+
+    def _build_elections(self):
+        from tkinter import ttk
+
+        ttk.Label(
+            self.elections_tab, text="Elections",
+            font=("TkDefaultFont", 15, "bold")
+        ).pack(anchor="w")
+        ttk.Label(
+            self.elections_tab,
+            text="Elections are held every 100 turns. Public happiness and policy choices influence your chance of winning.",
+            wraplength=800,
+        ).pack(anchor="w", pady=(4, 18))
+        self.election_status = ttk.Label(
+            self.elections_tab, justify="left", anchor="w", wraplength=800)
+        self.election_status.pack(fill="x", pady=(0, 14))
+        self.candidates_text = ttk.Label(
+            self.elections_tab, justify="left", anchor="w", wraplength=800)
+        self.candidates_text.pack(fill="x", pady=(0, 14))
+        controls = ttk.Frame(self.elections_tab)
+        controls.pack(anchor="w")
+        self.run_button = ttk.Button(
+            controls, text="Run for election", command=lambda: self._resolve_election(True),
+            state="disabled")
+        self.run_button.pack(side="left")
+        self.skip_button = ttk.Button(
+            controls, text="Do not nominate", command=lambda: self._resolve_election(False),
+            state="disabled")
+        self.skip_button.pack(side="left", padx=8)
+
+    def _update_elections(self):
+        if not election["active"]:
+            self.election_status.configure(
+                text=election["message"] or "No election is currently active.")
+            self.candidates_text.configure(text="")
+            self.run_button.configure(state="disabled")
+            self.skip_button.configure(state="disabled")
+            return
+        self.election_status.configure(text=election["message"])
+        candidates = "\n".join(
+            f"• {name} — challenger for {current_office()}"
+            for name in election["candidates"])
+        self.candidates_text.configure(
+            text=(
+                f"Your party: {profile['name']} Party\n"
+                f"Main opposition: {profile['opposition']} Party\n\n"
+                f"Competitors:\n{candidates}"
+            ))
+        self.run_button.configure(state="normal")
+        self.skip_button.configure(state="normal")
+
+    def _resolve_election(self, run):
+        result = resolve_election(run)
+        if result:
+            self.history.insert(0, f"Election: {result}")
+            self.dashboard_message.configure(text=result)
+            self._update_stats()
+            self._update_history()
+            self._update_elections()
+            self.messagebox.showinfo("Election result", result)
 
     def _build_events(self):
         from tkinter import ttk
@@ -888,7 +1126,7 @@ class ManagementApp:
         self.next_turn_button.pack(anchor="w", pady=(4, 0))
         ttk.Label(
             self.events_tab,
-            text="Keyboard: 1/2 choose an option  •  N next turn  •  D toggle theme  •  Tab switch tabs",
+            text="Keyboard: 1/2 choose  •  N next turn  •  D theme  •  P policies  •  E elections",
         ).pack(anchor="w", pady=(14, 0))
 
     def _build_investments(self):
@@ -921,6 +1159,18 @@ class ManagementApp:
             text="Your identity is generated automatically. Edit it whenever you like.",
             wraplength=720,
         ).pack(anchor="w", pady=(4, 20))
+        party_box = ttk.Frame(self.profile_tab, style="Card.TFrame", padding=12)
+        party_box.pack(fill="x", pady=(0, 16))
+        ttk.Label(
+            party_box, text="Political parties",
+            font=("TkDefaultFont", 12, "bold")
+        ).pack(anchor="w")
+        ttk.Label(
+            party_box,
+            text=f"Your party: {profile['name']} Party\n"
+                 f"Main opposition: {profile['opposition']} Party",
+            justify="left",
+        ).pack(anchor="w", pady=(6, 0))
 
         form = ttk.Frame(self.profile_tab)
         form.pack(anchor="w", fill="x")
@@ -964,6 +1214,8 @@ class ManagementApp:
         self.stat_vars["office"].set(current_office())
         self.stat_vars["rate"].set(f"{state['interest_rate']:.2f}%")
         self.stat_vars["fiscal"].set(state["fiscal_policy"])
+        self.stat_vars["wage"].set(f"${state['minimum_wage']:.2f}/hr")
+        self.stat_vars["tax"].set(f"{state['tax_rate']:.2f}%")
         self.status.set(f"Turn {state['turn']}")
 
     def _update_investments(self):
@@ -988,6 +1240,7 @@ class ManagementApp:
             return
         self.turn_complete = False
         self.next_turn_button.configure(state="disabled")
+        open_election_if_due()
         returned = []
         for investment in pending_investments:
             investment["turns_left"] -= 1
@@ -1007,6 +1260,7 @@ class ManagementApp:
         self._update_stats()
         self._update_investments()
         self._update_history()
+        self._update_elections()
         self.notebook.select(self.events_tab)
 
     def _render_event(self):
@@ -1069,7 +1323,7 @@ class ManagementApp:
             return
 
     def _next_turn(self):
-        if self.game_over or not self.turn_complete:
+        if self.game_over or not self.turn_complete or election["active"]:
             return
         self._start_turn()
 
@@ -1085,6 +1339,8 @@ class ManagementApp:
             self._toggle_theme()
         elif key == "p":
             self.notebook.select(self.policies_tab)
+        elif key == "e":
+            self.notebook.select(self.elections_tab)
 
     def _toggle_theme(self):
         self.dark_mode = not self.dark_mode
