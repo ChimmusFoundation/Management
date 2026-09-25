@@ -644,8 +644,11 @@ class ManagementApp:
         self.history = []
         self.current_event = None
         self.game_over = False
+        self.turn_complete = False
+        self.dark_mode = False
 
-        style = ttk.Style(root)
+        self.style = ttk.Style(root)
+        style = self.style
         if "clam" in style.theme_names():
             style.theme_use("clam")
         style.configure("Title.TLabel", font=("TkDefaultFont", 20, "bold"))
@@ -654,6 +657,7 @@ class ManagementApp:
         style.configure("Option.TButton", anchor="w", padding=(12, 10))
 
         self.status = tk.StringVar()
+        self.theme_label = tk.StringVar(value="Dark theme")
         self.stat_vars = {
             "money": tk.StringVar(),
             "happiness": tk.StringVar(),
@@ -663,6 +667,7 @@ class ManagementApp:
         }
 
         self._build_shell()
+        self.root.bind("<Key>", self._handle_key)
         self._start_turn()
 
     def _build_shell(self):
@@ -671,6 +676,11 @@ class ManagementApp:
         header = ttk.Frame(self.root, padding=(24, 18, 24, 8))
         header.pack(fill="x")
         ttk.Label(header, text="VOLTAIRE", style="Title.TLabel").pack(side="left")
+        ttk.Checkbutton(
+            header,
+            textvariable=self.theme_label,
+            command=self._toggle_theme,
+        ).pack(side="right", padx=(12, 0))
         ttk.Label(header, textvariable=self.status).pack(side="right", pady=6)
 
         self.notebook = ttk.Notebook(self.root)
@@ -734,6 +744,14 @@ class ManagementApp:
         self.event_result = ttk.Label(
             self.events_tab, justify="left", anchor="w", wraplength=820)
         self.event_result.pack(fill="x", pady=16)
+        self.next_turn_button = ttk.Button(
+            self.events_tab, text="Next turn  [N]", command=self._next_turn,
+            state="disabled")
+        self.next_turn_button.pack(anchor="w", pady=(4, 0))
+        ttk.Label(
+            self.events_tab,
+            text="Keyboard: 1/2 choose an option  •  N next turn  •  D toggle theme  •  Tab switch tabs",
+        ).pack(anchor="w", pady=(14, 0))
 
     def _build_investments(self):
         from tkinter import ttk
@@ -781,6 +799,8 @@ class ManagementApp:
     def _start_turn(self):
         if self.game_over:
             return
+        self.turn_complete = False
+        self.next_turn_button.configure(state="disabled")
         returned = []
         for investment in pending_investments:
             investment["turns_left"] -= 1
@@ -838,17 +858,73 @@ class ManagementApp:
         self.dashboard_message.configure(text=result)
         self.history.insert(0, f"Turn {state['turn']}: {result}")
         state["turn"] += 1
+        self.turn_complete = True
+        self.next_turn_button.configure(state="normal")
+        for child in self.options_frame.winfo_children():
+            child.configure(state="disabled")
         self._update_stats()
         self._update_investments()
         self._update_history()
         if check_game_over():
             self.game_over = True
+            self.turn_complete = False
+            self.next_turn_button.configure(state="disabled")
             for child in self.options_frame.winfo_children():
                 child.configure(state="disabled")
             self.status.set("Game over")
             self.messagebox.showinfo("Game over", self._game_over_message())
             return
-        self.root.after(250, self._start_turn)
+
+    def _next_turn(self):
+        if self.game_over or not self.turn_complete:
+            return
+        self._start_turn()
+
+    def _handle_key(self, event):
+        key = event.keysym.lower()
+        if key in ("1", "2") and not self.turn_complete:
+            index = int(key) - 1
+            if self.current_event and index < len(self.current_event["options"]):
+                self._choose(index)
+        elif key == "n":
+            self._next_turn()
+        elif key == "d":
+            self._toggle_theme()
+
+    def _toggle_theme(self):
+        self.dark_mode = not self.dark_mode
+        if self.dark_mode:
+            self.style.configure(".", background="#202124", foreground="#f1f3f4")
+            self.style.configure("TFrame", background="#202124")
+            self.style.configure("TLabel", background="#202124", foreground="#f1f3f4")
+            self.style.configure("Card.TFrame", background="#2d2f31")
+            self.style.configure("TCheckbutton", background="#202124", foreground="#f1f3f4")
+            self.style.configure("TNotebook", background="#202124")
+            self.style.configure("TNotebook.Tab", background="#303134", foreground="#f1f3f4")
+            self.style.map(
+                "TButton",
+                background=[("active", "#4b5563"), ("!disabled", "#35383c")],
+                foreground=[("!disabled", "#f1f3f4")],
+            )
+            self.style.configure("Option.TButton", background="#35383c", foreground="#f1f3f4")
+            self.root.configure(background="#202124")
+            self.theme_label.set("Light theme")
+        else:
+            self.style.configure(".", background="#f0f0f0", foreground="#000000")
+            self.style.configure("TFrame", background="#f0f0f0")
+            self.style.configure("TLabel", background="#f0f0f0", foreground="#000000")
+            self.style.configure("Card.TFrame", background="#f0f0f0")
+            self.style.configure("TCheckbutton", background="#f0f0f0", foreground="#000000")
+            self.style.configure("TNotebook", background="#f0f0f0")
+            self.style.configure("TNotebook.Tab", background="#f0f0f0", foreground="#000000")
+            self.style.map(
+                "TButton",
+                background=[("active", "#e0e0e0"), ("!disabled", "#f0f0f0")],
+                foreground=[("!disabled", "#000000")],
+            )
+            self.style.configure("Option.TButton", background="#f0f0f0", foreground="#000000")
+            self.root.configure(background="#f0f0f0")
+            self.theme_label.set("Dark theme")
 
     def _game_over_message(self):
         if state["happiness"] <= 0:
