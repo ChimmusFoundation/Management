@@ -13,6 +13,20 @@ state = {
 pending_investments = []   # delayed payoff queue
 event_pool          = []   # shuffled event queue, refilled when empty
 
+profile = {
+    "name": random.choice([
+        "Alex Morgan", "Jordan Lee", "Taylor Brooks", "Casey Nguyen",
+        "Morgan Patel", "Riley Smith", "Avery Williams", "Jamie Chen",
+    ]),
+    "title": random.choice([
+        "Premier", "Governor", "Chancellor", "State Manager",
+    ]),
+    "region": random.choice([
+        "North District", "Coastal Territory", "River State",
+        "Western Region", "Central Province",
+    ]),
+}
+
 # ── INCOME CALCULATION ───────────────────────────────────────────────────────
 def income_per_turn():
     """Tax income earned each turn from GDP."""
@@ -681,6 +695,8 @@ class ManagementApp:
             textvariable=self.theme_label,
             command=self._toggle_theme,
         ).pack(side="right", padx=(12, 0))
+        self.profile_summary = ttk.Label(header, text=self._profile_summary())
+        self.profile_summary.pack(side="right", padx=(12, 0))
         ttk.Label(header, textvariable=self.status).pack(side="right", pady=6)
 
         self.notebook = ttk.Notebook(self.root)
@@ -690,15 +706,18 @@ class ManagementApp:
         self.events_tab = ttk.Frame(self.notebook, padding=20)
         self.investments_tab = ttk.Frame(self.notebook, padding=20)
         self.history_tab = ttk.Frame(self.notebook, padding=20)
+        self.profile_tab = ttk.Frame(self.notebook, padding=20)
         self.notebook.add(self.dashboard, text="Dashboard")
         self.notebook.add(self.events_tab, text="Events")
         self.notebook.add(self.investments_tab, text="Investments")
         self.notebook.add(self.history_tab, text="History")
+        self.notebook.add(self.profile_tab, text="Profile")
 
         self._build_dashboard()
         self._build_events()
         self._build_investments()
         self._build_history()
+        self._build_profile()
 
     def _build_dashboard(self):
         from tkinter import ttk
@@ -770,6 +789,52 @@ class ManagementApp:
         self.history_text = ttk.Label(
             self.history_tab, justify="left", anchor="nw", wraplength=820)
         self.history_text.pack(fill="both", expand=True, pady=(14, 0))
+
+    def _build_profile(self):
+        from tkinter import ttk
+
+        ttk.Label(
+            self.profile_tab, text="Your profile",
+            font=("TkDefaultFont", 15, "bold")
+        ).pack(anchor="w")
+        ttk.Label(
+            self.profile_tab,
+            text="Your identity is generated automatically. Edit it whenever you like.",
+            wraplength=720,
+        ).pack(anchor="w", pady=(4, 20))
+
+        form = ttk.Frame(self.profile_tab)
+        form.pack(anchor="w", fill="x")
+        form.columnconfigure(1, weight=1)
+        self.profile_vars = {}
+        fields = [("name", "Name"), ("title", "Role"), ("region", "Region")]
+        for row, (key, label) in enumerate(fields):
+            ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=8)
+            variable = self.tk.StringVar(value=profile[key])
+            self.profile_vars[key] = variable
+            ttk.Entry(form, textvariable=variable, width=40).grid(
+                row=row, column=1, sticky="ew", pady=8)
+
+        self.profile_message = ttk.Label(self.profile_tab)
+        self.profile_message.pack(anchor="w", pady=(16, 8))
+        ttk.Button(
+            self.profile_tab, text="Save profile", command=self._save_profile
+        ).pack(anchor="w")
+
+    def _profile_summary(self):
+        return f"{profile['title']} {profile['name']}"
+
+    def _save_profile(self):
+        values = {
+            key: variable.get().strip()
+            for key, variable in self.profile_vars.items()
+        }
+        if not all(values.values()):
+            self.profile_message.configure(text="Please fill in every profile field.")
+            return
+        profile.update(values)
+        self.profile_summary.configure(text=self._profile_summary())
+        self.profile_message.configure(text="Profile saved.")
 
     def _update_stats(self):
         self.stat_vars["money"].set(f"${state['money']:,}")
