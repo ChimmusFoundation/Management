@@ -1,5 +1,6 @@
 import os
 import random
+import re
 
 # ── GAME STATE ────────────────────────────────────────────────────────────────
 state = {
@@ -102,6 +103,36 @@ profile = {
 def income_per_turn():
     """Tax income earned each turn from GDP."""
     return int(state["gdp"] * state["tax_rate"] / 100)
+
+def effective_option(option):
+    """Scale government spending with time and available budget."""
+    adjusted = option.copy()
+    outcome = option["outcome"].copy()
+    base_cost = -outcome.get("money", 0)
+    if base_cost <= 0:
+        return adjusted
+
+    # Spending rises exponentially as the administration grows. A larger
+    # treasury can absorb larger projects; struggling governments get relief.
+    turn_growth = 1.045 ** max(0, state["turn"] - 1)
+    budget_factor = min(2.5, max(0.55, (state["money"] / 10000) ** 0.5))
+    cost = int(base_cost * turn_growth * budget_factor)
+    # Keep a reserve so expensive projects are risky without making every
+    # high-turn event an unavoidable bankruptcy spiral.
+    cost = min(cost, max(0, int(state["money"] * 0.45)))
+    outcome["money"] = -cost
+    adjusted["outcome"] = outcome
+    budget = state["money"]
+    ratio = cost / budget if budget else 1
+    risk = "High" if ratio >= 0.35 else "Medium" if ratio >= 0.2 else "Low"
+    adjusted["label"] = re.sub(
+        r"-\$[\d,]+", f"-${cost:,}", option["label"], count=1)
+    adjusted["effects"] = [
+        re.sub(r"-\$[\d,]+", f"-${cost:,}", effect, count=1)
+        for effect in option.get("effects", [])
+    ]
+    adjusted["effects"].append(f"Budget risk: {risk} ({ratio:.0%} of treasury)")
+    return adjusted
 
 def open_election_if_due():
     """Open an election every 100 turns once the player has begun governing."""
@@ -245,7 +276,8 @@ def render_event(event):
     for line in event["description"]:
         print(_row(line))
     print(_div())
-    for i, opt in enumerate(event["options"]):
+    for i, original_option in enumerate(event["options"]):
+        opt = effective_option(original_option)
         label = opt['label']
         prefix = f"[{i+1}]  "
         max_len = BOX_WIDTH - 4 - len(prefix)
@@ -649,28 +681,28 @@ EVENTS = [
     {
         "id": "al_merqaedes",
         "description": [
-            "Al Merqaedes, a high-profile community leader, has",
-            "launched a public campaign calling for practical reform.",
-            "They want a direct meeting with your government and a",
-            "fund for local projects that residents can vote on.",
+            "The Al Merqaedes F1 team has arrived at Parliament after",
+            "another chaotic race weekend. Osama Bin Russell wants",
+            "a faster car, while Kimi Tabonelli is asking for a radio",
+            "message that makes sense for once.",
         ],
         "options": [
             {
-                "label": "Fund the community plan (-$1,500 | +8 happiness | +25 population)",
+                "label": "Fund the upgrades (-$1,500 | +8 happiness | +25 population)",
                 "outcome": {"money": -1500, "happiness": +8, "population": +25},
-                "message": "Al Merqaedes' plan is funded. Residents begin choosing projects.",
+                "message": "Upgrades approved. Osama Bin Russell and Kimi Tabonelli are ready to send it.",
                 "effects": ["Money:      -$1,500", "Happiness:  +8%", "Population: +25"],
             },
             {
-                "label": "Invite them to Parliament (+$0 | +3 happiness)",
+                "label": "Ask Toto to handle it (+$0 | +3 happiness)",
                 "outcome": {"happiness": +3},
-                "message": "The meeting is productive, but the promised fund is delayed.",
+                "message": "Toto says the strategy is under control. Nobody knows what that means.",
                 "effects": ["Money:      no change", "Happiness:  +3%"],
             },
             {
-                "label": "Dismiss the campaign (+$0 | -8 happiness | -20 population)",
+                "label": "Blame the strategy (+$0 | -8 happiness | -20 population)",
                 "outcome": {"happiness": -8, "population": -20},
-                "message": "The campaign grows louder as residents feel ignored.",
+                "message": "The team issues a statement. The fans are not convinced.",
                 "effects": ["Money:      no change", "Happiness:  -8%", "Population: -20"],
             },
         ],
@@ -795,7 +827,7 @@ def cli_main():
         render_event(event)
 
         choice_index = get_player_choice(len(event["options"]))
-        chosen = event["options"][choice_index]
+        chosen = effective_option(event["options"][choice_index])
 
         if event.get("investment") and "investment_payoff" in chosen:
             p = chosen["investment_payoff"]
@@ -852,6 +884,7 @@ class ManagementApp:
         style.configure("Option.TButton", anchor="w", padding=(12, 10))
 
         self.status = tk.StringVar()
+        self.top_stats = tk.StringVar()
         self.theme_label = tk.StringVar(value="Dark theme")
         self.stat_vars = {
             "money": tk.StringVar(),
@@ -884,6 +917,10 @@ class ManagementApp:
         self.profile_summary = ttk.Label(header, text=self._profile_summary())
         self.profile_summary.pack(side="right", padx=(12, 0))
         ttk.Label(header, textvariable=self.status).pack(side="right", pady=6)
+        ttk.Label(
+            self.root, textvariable=self.top_stats,
+            padding=(24, 4, 24, 10),
+        ).pack(fill="x")
 
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, padx=18, pady=(0, 18))
@@ -1217,6 +1254,13 @@ class ManagementApp:
         self.stat_vars["wage"].set(f"${state['minimum_wage']:.2f}/hr")
         self.stat_vars["tax"].set(f"{state['tax_rate']:.2f}%")
         self.status.set(f"Turn {state['turn']}")
+        self.top_stats.set(
+            f"Money  ${state['money']:,}    •    "
+            f"Happiness  {state['happiness']}%    •    "
+            f"Population  {state['population']:,}    •    "
+            f"GDP  ${state['gdp']:,}    •    "
+            f"Income  +${income_per_turn():,}/turn"
+        )
 
     def _update_investments(self):
         if not pending_investments:
@@ -1272,7 +1316,8 @@ class ManagementApp:
         self.event_result.configure(text="")
         for child in self.options_frame.winfo_children():
             child.destroy()
-        for index, option in enumerate(event["options"]):
+        for index, original_option in enumerate(event["options"]):
+            option = effective_option(original_option)
             button = self.ttk.Button(
                 self.options_frame,
                 text=f"{index + 1}. {option['label']}",
@@ -1284,7 +1329,7 @@ class ManagementApp:
         if self.game_over:
             return
         event = self.current_event
-        chosen = event["options"][index]
+        chosen = effective_option(event["options"][index])
         if event.get("investment") and "investment_payoff" in chosen:
             payoff = chosen["investment_payoff"]
             pending_investments.append({
