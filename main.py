@@ -589,7 +589,7 @@ def check_game_over():
     return False
 
 # ── MAIN LOOP ─────────────────────────────────────────────────────────────────
-def main():
+def cli_main():
     while True:
         clear()
         render_header()
@@ -626,6 +626,253 @@ def main():
 
         state["turn"] += 1
         input("  Press Enter to continue to next turn...")
+
+class ManagementApp:
+    """Cross-platform desktop UI for the management game."""
+
+    def __init__(self, root):
+        import tkinter as tk
+        from tkinter import messagebox, ttk
+
+        self.tk = tk
+        self.messagebox = messagebox
+        self.ttk = ttk
+        self.root = root
+        self.root.title("Voltaire - Management")
+        self.root.minsize(820, 620)
+        self.root.geometry("980x720")
+        self.history = []
+        self.current_event = None
+        self.game_over = False
+
+        style = ttk.Style(root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        style.configure("Title.TLabel", font=("TkDefaultFont", 20, "bold"))
+        style.configure("StatValue.TLabel", font=("TkDefaultFont", 16, "bold"))
+        style.configure("Card.TFrame", relief="groove", borderwidth=1)
+        style.configure("Option.TButton", anchor="w", padding=(12, 10))
+
+        self.status = tk.StringVar()
+        self.stat_vars = {
+            "money": tk.StringVar(),
+            "happiness": tk.StringVar(),
+            "population": tk.StringVar(),
+            "gdp": tk.StringVar(),
+            "income": tk.StringVar(),
+        }
+
+        self._build_shell()
+        self._start_turn()
+
+    def _build_shell(self):
+        from tkinter import ttk
+
+        header = ttk.Frame(self.root, padding=(24, 18, 24, 8))
+        header.pack(fill="x")
+        ttk.Label(header, text="VOLTAIRE", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, textvariable=self.status).pack(side="right", pady=6)
+
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+
+        self.dashboard = ttk.Frame(self.notebook, padding=20)
+        self.events_tab = ttk.Frame(self.notebook, padding=20)
+        self.investments_tab = ttk.Frame(self.notebook, padding=20)
+        self.history_tab = ttk.Frame(self.notebook, padding=20)
+        self.notebook.add(self.dashboard, text="Dashboard")
+        self.notebook.add(self.events_tab, text="Events")
+        self.notebook.add(self.investments_tab, text="Investments")
+        self.notebook.add(self.history_tab, text="History")
+
+        self._build_dashboard()
+        self._build_events()
+        self._build_investments()
+        self._build_history()
+
+    def _build_dashboard(self):
+        from tkinter import ttk
+
+        ttk.Label(self.dashboard, text="State overview",
+                  font=("TkDefaultFont", 15, "bold")).pack(anchor="w")
+        stats = ttk.Frame(self.dashboard)
+        stats.pack(fill="x", pady=(14, 20))
+        labels = [
+            ("money", "Money"), ("happiness", "Happiness"),
+            ("population", "Population"), ("gdp", "GDP"),
+            ("income", "Income / turn"),
+        ]
+        for column, (key, label) in enumerate(labels):
+            card = ttk.Frame(stats, style="Card.TFrame", padding=12)
+            card.grid(row=0, column=column, sticky="nsew", padx=4)
+            stats.columnconfigure(column, weight=1)
+            ttk.Label(card, text=label).pack(anchor="w")
+            ttk.Label(card, textvariable=self.stat_vars[key],
+                      style="StatValue.TLabel").pack(anchor="w", pady=(7, 0))
+
+        self.dashboard_message = ttk.Label(
+            self.dashboard, text="Choose an option in the Events tab to govern your state.",
+            wraplength=720)
+        self.dashboard_message.pack(anchor="w", pady=10)
+        ttk.Button(self.dashboard, text="View current event",
+                   command=lambda: self.notebook.select(self.events_tab)).pack(anchor="w", pady=8)
+
+    def _build_events(self):
+        from tkinter import ttk
+
+        self.event_title = ttk.Label(self.events_tab, font=("TkDefaultFont", 15, "bold"))
+        self.event_title.pack(anchor="w")
+        self.event_kind = ttk.Label(self.events_tab)
+        self.event_kind.pack(anchor="w", pady=(2, 12))
+        self.event_description = ttk.Label(
+            self.events_tab, justify="left", anchor="w", wraplength=820)
+        self.event_description.pack(fill="x", pady=(0, 18))
+        ttk.Label(self.events_tab, text="Your decision",
+                  font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+        self.options_frame = ttk.Frame(self.events_tab)
+        self.options_frame.pack(fill="x", pady=8)
+        self.event_result = ttk.Label(
+            self.events_tab, justify="left", anchor="w", wraplength=820)
+        self.event_result.pack(fill="x", pady=16)
+
+    def _build_investments(self):
+        from tkinter import ttk
+
+        ttk.Label(self.investments_tab, text="Active investments",
+                  font=("TkDefaultFont", 15, "bold")).pack(anchor="w")
+        self.investments_text = ttk.Label(
+            self.investments_tab, justify="left", anchor="nw", wraplength=820)
+        self.investments_text.pack(fill="both", expand=True, pady=(14, 0))
+
+    def _build_history(self):
+        from tkinter import ttk
+
+        ttk.Label(self.history_tab, text="Decision history",
+                  font=("TkDefaultFont", 15, "bold")).pack(anchor="w")
+        self.history_text = ttk.Label(
+            self.history_tab, justify="left", anchor="nw", wraplength=820)
+        self.history_text.pack(fill="both", expand=True, pady=(14, 0))
+
+    def _update_stats(self):
+        self.stat_vars["money"].set(f"${state['money']:,}")
+        self.stat_vars["happiness"].set(f"{state['happiness']}%")
+        self.stat_vars["population"].set(f"{state['population']:,}")
+        self.stat_vars["gdp"].set(f"${state['gdp']:,}")
+        self.stat_vars["income"].set(f"+${income_per_turn():,}")
+        self.status.set(f"Turn {state['turn']}")
+
+    def _update_investments(self):
+        if not pending_investments:
+            self.investments_text.configure(text="No active investments.")
+            return
+        lines = [
+            f"{item['label']} - returns in {item['turns_left']} "
+            f"turn{'s' if item['turns_left'] != 1 else ''}"
+            for item in pending_investments
+        ]
+        self.investments_text.configure(text="\n\n".join(lines))
+
+    def _update_history(self):
+        if not self.history:
+            self.history_text.configure(text="No decisions yet.")
+        else:
+            self.history_text.configure(text="\n\n".join(self.history))
+
+    def _start_turn(self):
+        if self.game_over:
+            return
+        returned = []
+        for investment in pending_investments:
+            investment["turns_left"] -= 1
+            if investment["turns_left"] <= 0:
+                returned.append(investment)
+        for investment in returned:
+            pending_investments.remove(investment)
+            apply_outcome(investment["payoff"]["outcome"])
+            payoff = investment["payoff"]
+            returned_text = "Investment returned:\n" + "\n".join(
+                payoff["return_message"] + payoff["return_effects_display"])
+            self.history.insert(0, returned_text)
+            self.dashboard_message.configure(text=returned_text)
+
+        self.current_event = next_event()
+        self._render_event()
+        self._update_stats()
+        self._update_investments()
+        self._update_history()
+        self.notebook.select(self.events_tab)
+
+    def _render_event(self):
+        event = self.current_event
+        self.event_title.configure(text=event["id"].replace("_", " ").title())
+        self.event_kind.configure(
+            text="Investment opportunity" if event.get("investment") else "Public event")
+        self.event_description.configure(text="\n".join(event["description"]))
+        self.event_result.configure(text="")
+        for child in self.options_frame.winfo_children():
+            child.destroy()
+        for index, option in enumerate(event["options"]):
+            button = self.ttk.Button(
+                self.options_frame,
+                text=f"{index + 1}. {option['label']}",
+                style="Option.TButton",
+                command=lambda selected=index: self._choose(selected))
+            button.pack(fill="x", pady=4)
+
+    def _choose(self, index):
+        if self.game_over:
+            return
+        event = self.current_event
+        chosen = event["options"][index]
+        if event.get("investment") and "investment_payoff" in chosen:
+            payoff = chosen["investment_payoff"]
+            pending_investments.append({
+                "turns_left": payoff["turns"],
+                "label": event["id"].replace("_", " ").title(),
+                "payoff": payoff,
+            })
+        apply_outcome(chosen["outcome"])
+        passive_turn_effects()
+        result = chosen["message"] + "\n\n" + "\n".join(chosen["effects"])
+        self.event_result.configure(text=result)
+        self.dashboard_message.configure(text=result)
+        self.history.insert(0, f"Turn {state['turn']}: {result}")
+        state["turn"] += 1
+        self._update_stats()
+        self._update_investments()
+        self._update_history()
+        if check_game_over():
+            self.game_over = True
+            for child in self.options_frame.winfo_children():
+                child.configure(state="disabled")
+            self.status.set("Game over")
+            self.messagebox.showinfo("Game over", self._game_over_message())
+            return
+        self.root.after(250, self._start_turn)
+
+    def _game_over_message(self):
+        if state["happiness"] <= 0:
+            return "Happiness reached 0%. You have been voted out."
+        if state["money"] <= 0:
+            return "The government is bankrupt."
+        return "The population has reached zero."
+
+
+def main():
+    import tkinter as tk
+    try:
+        root = tk.Tk()
+    except tk.TclError as error:
+        # Servers and containers often have no X11/Wayland display. Keep the
+        # game usable there instead of failing before the first turn.
+        if "display" not in str(error).lower():
+            raise
+        print("No graphical display detected; starting the terminal interface.")
+        cli_main()
+        return
+    ManagementApp(root)
+    root.mainloop()
+
 
 if __name__ == "__main__":
     main()
