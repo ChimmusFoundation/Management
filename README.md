@@ -12,6 +12,9 @@ python main.py
 ```
 
 The interface includes a dashboard for state metrics, an **Events** tab with
-clickable decision buttons, an **Investments** tab for delayed payoffs, and a
-**History** tab for previous decisions and outcomes. No third-party GUI
-packages are required.
+clickable decision buttons, a **Policies** tab for the Reserve Bank cash rate
+and federal budget stance, an **Investments** tab for delayed payoffs, and a
+**History** tab for previous decisions and outcomes. Your career progresses
+from local councillor and mayor through state and federal parliament to Prime
+Minister when you maintain public support. No third-party GUI packages are
+required.

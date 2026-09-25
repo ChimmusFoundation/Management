@@ -8,15 +8,36 @@ state = {
     "happiness":  50,
     "population": 500,
     "gdp":        25000,
+    "interest_rate": 4.35,
+    "fiscal_policy": "Balanced",
+    "career_level": 0,
 }
 
 pending_investments = []   # delayed payoff queue
 event_pool          = []   # shuffled event queue, refilled when empty
 
+CAREER_LEVELS = [
+    ("Local Councillor", 1, 0),
+    ("Mayor", 4, 45),
+    ("State MP", 8, 50),
+    ("State Minister", 12, 55),
+    ("Premier", 16, 60),
+    ("Federal MP", 22, 65),
+    ("Federal Minister", 28, 70),
+    ("Prime Minister", 36, 75),
+]
+
 profile = {
     "name": random.choice([
-        "Alex Morgan", "Jordan Lee", "Taylor Brooks", "Casey Nguyen",
-        "Morgan Patel", "Riley Smith", "Avery Williams", "Jamie Chen",
+        f"{adjective} {role}"
+        for adjective in (
+            "Awesome", "Brave", "Clever", "Fearless", "Mighty",
+            "Powerful", "Radiant", "Swift", "Valiant", "Wise",
+        )
+        for role in (
+            "Knight", "Druid", "Ranger", "Bard", "Alchemist",
+            "Warden", "Sage", "Captain", "Mage", "Guardian",
+        )
     ]),
     "title": random.choice([
         "Premier", "Governor", "Chancellor", "State Manager",
@@ -31,6 +52,20 @@ profile = {
 def income_per_turn():
     """Tax income earned each turn from GDP."""
     return int(state["gdp"] * 0.05)
+
+def current_office():
+    return CAREER_LEVELS[state["career_level"]][0]
+
+def advance_career():
+    """Promote the player when they have served long enough and retained trust."""
+    next_level = state["career_level"] + 1
+    if next_level >= len(CAREER_LEVELS):
+        return None
+    office, required_turn, required_happiness = CAREER_LEVELS[next_level]
+    if state["turn"] >= required_turn and state["happiness"] >= required_happiness:
+        state["career_level"] = next_level
+        return office
+    return None
 
 # ── UI HELPERS ────────────────────────────────────────────────────────────────
 def clear():
@@ -101,7 +136,7 @@ def render_header():
     width = 64
     print()
     print("  " + "=" * width)
-    print(f"  VOLTAIRE  --  MANAGEMENT PROTOTYPE   [ Turn {state['turn']} ]")
+    print(f"  VOLTAIRE  --  {current_office().upper()}   [ Turn {state['turn']} ]")
     print("  " + "=" * width)
 
 BOX_WIDTH = 64
@@ -549,6 +584,16 @@ def happiness_gdp_bonus():
 
 def passive_turn_effects():
     gdp_growth = int(state["gdp"] * 0.01)
+    rate_delta = state["interest_rate"] - 4.35
+    gdp_growth += int(state["gdp"] * (-rate_delta * 0.008))
+    if state["fiscal_policy"] == "Stimulus":
+        state["money"] -= 450
+        state["gdp"] += int(state["gdp"] * 0.006)
+        state["happiness"] += 2
+    elif state["fiscal_policy"] == "Austerity":
+        state["money"] += 650
+        state["gdp"] -= int(state["gdp"] * 0.004)
+        state["happiness"] -= 2
     state["gdp"] += gdp_growth
     happiness_gdp_bonus()
     state["money"] += income_per_turn()
@@ -632,13 +677,16 @@ def cli_main():
 
         apply_outcome(chosen["outcome"])
         passive_turn_effects()
+        state["turn"] += 1
+        promoted_to = advance_career()
 
         clear()
         render_header()
         render_stats()
+        if promoted_to:
+            print(f"  PROMOTION: You are now {promoted_to}.")
         render_outcome(chosen["message"], chosen["effects"])
 
-        state["turn"] += 1
         input("  Press Enter to continue to next turn...")
 
 class ManagementApp:
@@ -678,6 +726,9 @@ class ManagementApp:
             "population": tk.StringVar(),
             "gdp": tk.StringVar(),
             "income": tk.StringVar(),
+            "office": tk.StringVar(),
+            "rate": tk.StringVar(),
+            "fiscal": tk.StringVar(),
         }
 
         self._build_shell()
@@ -704,17 +755,20 @@ class ManagementApp:
 
         self.dashboard = ttk.Frame(self.notebook, padding=20)
         self.events_tab = ttk.Frame(self.notebook, padding=20)
+        self.policies_tab = ttk.Frame(self.notebook, padding=20)
         self.investments_tab = ttk.Frame(self.notebook, padding=20)
         self.history_tab = ttk.Frame(self.notebook, padding=20)
         self.profile_tab = ttk.Frame(self.notebook, padding=20)
         self.notebook.add(self.dashboard, text="Dashboard")
         self.notebook.add(self.events_tab, text="Events")
+        self.notebook.add(self.policies_tab, text="Policies")
         self.notebook.add(self.investments_tab, text="Investments")
         self.notebook.add(self.history_tab, text="History")
         self.notebook.add(self.profile_tab, text="Profile")
 
         self._build_dashboard()
         self._build_events()
+        self._build_policies()
         self._build_investments()
         self._build_history()
         self._build_profile()
@@ -735,9 +789,20 @@ class ManagementApp:
             card = ttk.Frame(stats, style="Card.TFrame", padding=12)
             card.grid(row=0, column=column, sticky="nsew", padx=4)
             stats.columnconfigure(column, weight=1)
-            ttk.Label(card, text=label).pack(anchor="w")
+            ttk.Label(card, text=label, style="Card.TLabel").pack(anchor="w")
             ttk.Label(card, textvariable=self.stat_vars[key],
-                      style="StatValue.TLabel").pack(anchor="w", pady=(7, 0))
+                      style="CardValue.TLabel").pack(anchor="w", pady=(7, 0))
+        policy_summary = ttk.Frame(self.dashboard, style="Card.TFrame", padding=12)
+        policy_summary.pack(fill="x", pady=(0, 16))
+        ttk.Label(policy_summary, text="Office").pack(side="left")
+        ttk.Label(policy_summary, textvariable=self.stat_vars["office"],
+                  style="StatValue.TLabel").pack(side="left", padx=(8, 28))
+        ttk.Label(policy_summary, text="Interest rate").pack(side="left")
+        ttk.Label(policy_summary, textvariable=self.stat_vars["rate"],
+                  style="StatValue.TLabel").pack(side="left", padx=(8, 28))
+        ttk.Label(policy_summary, text="Fiscal policy").pack(side="left")
+        ttk.Label(policy_summary, textvariable=self.stat_vars["fiscal"],
+                  style="StatValue.TLabel").pack(side="left", padx=8)
 
         self.dashboard_message = ttk.Label(
             self.dashboard, text="Choose an option in the Events tab to govern your state.",
@@ -745,6 +810,60 @@ class ManagementApp:
         self.dashboard_message.pack(anchor="w", pady=10)
         ttk.Button(self.dashboard, text="View current event",
                    command=lambda: self.notebook.select(self.events_tab)).pack(anchor="w", pady=8)
+
+    def _build_policies(self):
+        from tkinter import ttk
+
+        ttk.Label(
+            self.policies_tab, text="Economic policy",
+            font=("TkDefaultFont", 15, "bold")
+        ).pack(anchor="w")
+        ttk.Label(
+            self.policies_tab,
+            text="Set policy before the next turn. Choices affect growth, revenue, and public happiness.",
+            wraplength=800,
+        ).pack(anchor="w", pady=(4, 18))
+
+        rate_box = ttk.Frame(self.policies_tab, style="Card.TFrame", padding=14)
+        rate_box.pack(fill="x", pady=(0, 14))
+        ttk.Label(rate_box, text="Reserve Bank cash rate",
+                  font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+        self.rate_value = ttk.Label(rate_box, textvariable=self.stat_vars["rate"])
+        self.rate_value.pack(anchor="w", pady=6)
+        rate_controls = ttk.Frame(rate_box)
+        rate_controls.pack(anchor="w")
+        ttk.Button(rate_controls, text="- 0.25%", command=lambda: self._change_rate(-0.25)).pack(side="left")
+        ttk.Button(rate_controls, text="+ 0.25%", command=lambda: self._change_rate(0.25)).pack(side="left", padx=8)
+
+        fiscal_box = ttk.Frame(self.policies_tab, style="Card.TFrame", padding=14)
+        fiscal_box.pack(fill="x")
+        ttk.Label(fiscal_box, text="Federal budget stance",
+                  font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+        ttk.Label(
+            fiscal_box,
+            text="Stimulus spends money to lift growth; austerity protects the budget but reduces happiness.",
+            wraplength=800,
+        ).pack(anchor="w", pady=6)
+        fiscal_controls = ttk.Frame(fiscal_box)
+        fiscal_controls.pack(anchor="w")
+        for policy_name in ("Stimulus", "Balanced", "Austerity"):
+            ttk.Button(
+                fiscal_controls, text=policy_name,
+                command=lambda selected=policy_name: self._set_fiscal_policy(selected),
+            ).pack(side="left", padx=(0, 8))
+
+        self.policy_message = ttk.Label(self.policies_tab)
+        self.policy_message.pack(anchor="w", pady=16)
+
+    def _change_rate(self, delta):
+        state["interest_rate"] = round(min(12.0, max(0.1, state["interest_rate"] + delta)), 2)
+        self._update_stats()
+        self.policy_message.configure(text=f"Cash rate set to {state['interest_rate']:.2f}%.")
+
+    def _set_fiscal_policy(self, policy_name):
+        state["fiscal_policy"] = policy_name
+        self._update_stats()
+        self.policy_message.configure(text=f"Fiscal policy set to {policy_name}.")
 
     def _build_events(self):
         from tkinter import ttk
@@ -842,6 +961,9 @@ class ManagementApp:
         self.stat_vars["population"].set(f"{state['population']:,}")
         self.stat_vars["gdp"].set(f"${state['gdp']:,}")
         self.stat_vars["income"].set(f"+${income_per_turn():,}")
+        self.stat_vars["office"].set(current_office())
+        self.stat_vars["rate"].set(f"{state['interest_rate']:.2f}%")
+        self.stat_vars["fiscal"].set(state["fiscal_policy"])
         self.status.set(f"Turn {state['turn']}")
 
     def _update_investments(self):
@@ -923,6 +1045,12 @@ class ManagementApp:
         self.dashboard_message.configure(text=result)
         self.history.insert(0, f"Turn {state['turn']}: {result}")
         state["turn"] += 1
+        promoted_to = advance_career()
+        if promoted_to:
+            result += f"\n\nPromotion: You are now {promoted_to}."
+            self.event_result.configure(text=result)
+            self.dashboard_message.configure(text=result)
+            self.history.insert(0, f"Promotion: You are now {promoted_to}.")
         self.turn_complete = True
         self.next_turn_button.configure(state="normal")
         for child in self.options_frame.winfo_children():
@@ -955,33 +1083,66 @@ class ManagementApp:
             self._next_turn()
         elif key == "d":
             self._toggle_theme()
+        elif key == "p":
+            self.notebook.select(self.policies_tab)
 
     def _toggle_theme(self):
         self.dark_mode = not self.dark_mode
         if self.dark_mode:
-            self.style.configure(".", background="#202124", foreground="#f1f3f4")
-            self.style.configure("TFrame", background="#202124")
-            self.style.configure("TLabel", background="#202124", foreground="#f1f3f4")
-            self.style.configure("Card.TFrame", background="#2d2f31")
-            self.style.configure("TCheckbutton", background="#202124", foreground="#f1f3f4")
-            self.style.configure("TNotebook", background="#202124")
-            self.style.configure("TNotebook.Tab", background="#303134", foreground="#f1f3f4")
+            # Tokyo Night-inspired palette: navy surfaces, lavender text,
+            # and blue/purple accents with enough contrast for long sessions.
+            background = "#1a1b26"
+            surface = "#24283b"
+            elevated = "#292e42"
+            text = "#c0caf5"
+            muted = "#a9b1d6"
+            accent = "#7aa2f7"
+            self.style.configure(".", background=background, foreground=text)
+            self.style.configure("TFrame", background=background)
+            self.style.configure("TLabel", background=background, foreground=text)
+            self.style.configure("Title.TLabel", background=background, foreground="#bb9af7")
+            self.style.configure("StatValue.TLabel", background=surface, foreground="#7dcfff")
+            self.style.configure("Card.TFrame", background=surface)
+            self.style.configure("Card.TLabel", background=surface, foreground=muted)
+            self.style.configure("CardValue.TLabel", background=surface, foreground="#7dcfff")
+            self.style.configure("TCheckbutton", background=background, foreground=muted)
+            self.style.configure("TNotebook", background=background, borderwidth=0)
+            self.style.configure(
+                "TNotebook.Tab", background=surface, foreground=muted,
+                padding=(12, 7))
+            self.style.map(
+                "TNotebook.Tab",
+                background=[("selected", elevated), ("active", "#414868")],
+                foreground=[("selected", text), ("active", text)],
+            )
+            self.style.configure(
+                "TEntry", fieldbackground=surface, foreground=text,
+                insertcolor=text, bordercolor="#414868")
             self.style.map(
                 "TButton",
-                background=[("active", "#4b5563"), ("!disabled", "#35383c")],
-                foreground=[("!disabled", "#f1f3f4")],
+                background=[("active", "#414868"), ("!disabled", elevated)],
+                foreground=[("!disabled", text)],
             )
-            self.style.configure("Option.TButton", background="#35383c", foreground="#f1f3f4")
-            self.root.configure(background="#202124")
+            self.style.configure("Option.TButton", background=elevated, foreground=text)
+            self.style.map(
+                "TCheckbutton",
+                foreground=[("active", accent), ("!disabled", muted)],
+            )
+            self.root.configure(background=background)
             self.theme_label.set("Light theme")
         else:
             self.style.configure(".", background="#f0f0f0", foreground="#000000")
             self.style.configure("TFrame", background="#f0f0f0")
             self.style.configure("TLabel", background="#f0f0f0", foreground="#000000")
+            self.style.configure("Title.TLabel", background="#f0f0f0", foreground="#000000")
+            self.style.configure("StatValue.TLabel", background="#f0f0f0", foreground="#000000")
             self.style.configure("Card.TFrame", background="#f0f0f0")
+            self.style.configure("Card.TLabel", background="#f0f0f0", foreground="#000000")
+            self.style.configure("CardValue.TLabel", background="#f0f0f0", foreground="#000000")
             self.style.configure("TCheckbutton", background="#f0f0f0", foreground="#000000")
-            self.style.configure("TNotebook", background="#f0f0f0")
+            self.style.configure("TNotebook", background="#f0f0f0", borderwidth=0)
             self.style.configure("TNotebook.Tab", background="#f0f0f0", foreground="#000000")
+            self.style.configure("TEntry", fieldbackground="#ffffff", foreground="#000000")
             self.style.map(
                 "TButton",
                 background=[("active", "#e0e0e0"), ("!disabled", "#f0f0f0")],
