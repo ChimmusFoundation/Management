@@ -14,6 +14,8 @@ state = {
     "minimum_wage": 24.10,
     "tax_rate": 5.0,
     "career_level": 0,
+    "decision_streak": 0,
+    "last_choice": None,
 }
 
 pending_investments = []   # delayed payoff queue
@@ -754,6 +756,29 @@ def passive_turn_effects():
     happiness_gdp_bonus()
     state["money"] += income_per_turn()
 
+def apply_decision_fatigue(choice_index):
+    """Discourage blindly repeating one option every turn."""
+    if state["last_choice"] == choice_index:
+        state["decision_streak"] += 1
+    else:
+        state["decision_streak"] = 1
+    state["last_choice"] = choice_index
+
+    streak = state["decision_streak"]
+    if streak < 3:
+        return None
+
+    # Repeating the same numbered choice signals one-dimensional governing.
+    # The backlash grows, but is bounded so changing course remains viable.
+    backlash = min(12, (streak - 2) * 3)
+    state["happiness"] = max(0, state["happiness"] - backlash)
+    state["population"] = max(0, state["population"] - max(1, backlash // 3))
+    return (
+        f"Political fatigue: you selected option {choice_index + 1} "
+        f"{streak} turns in a row. Public backlash costs "
+        f"{backlash} happiness."
+    )
+
 def tick_investments():
     returned = []
     for inv in pending_investments:
@@ -838,6 +863,7 @@ def cli_main():
             })
 
         apply_outcome(chosen["outcome"])
+        fatigue_result = apply_decision_fatigue(choice_index)
         passive_turn_effects()
         election_result = resolve_election(run=election_run) if election["active"] else None
         state["turn"] += 1
@@ -851,6 +877,8 @@ def cli_main():
         if election_result:
             print(f"  ELECTION: {election_result}")
         render_outcome(chosen["message"], chosen["effects"])
+        if fatigue_result:
+            print(f"  {fatigue_result}")
 
         input("  Press Enter to continue to next turn...")
 
@@ -897,6 +925,7 @@ class ManagementApp:
             "fiscal": tk.StringVar(),
             "wage": tk.StringVar(),
             "tax": tk.StringVar(),
+            "streak": tk.StringVar(),
         }
 
         self._build_shell()
@@ -980,6 +1009,9 @@ class ManagementApp:
                   style="StatValue.TLabel").pack(side="left", padx=8)
         ttk.Label(policy_summary, text="Tax").pack(side="left", padx=(20, 0))
         ttk.Label(policy_summary, textvariable=self.stat_vars["tax"],
+                  style="StatValue.TLabel").pack(side="left", padx=(8, 0))
+        ttk.Label(policy_summary, text="Decision streak").pack(side="left", padx=(20, 0))
+        ttk.Label(policy_summary, textvariable=self.stat_vars["streak"],
                   style="StatValue.TLabel").pack(side="left", padx=(8, 0))
 
         self.dashboard_message = ttk.Label(
@@ -1253,6 +1285,9 @@ class ManagementApp:
         self.stat_vars["fiscal"].set(state["fiscal_policy"])
         self.stat_vars["wage"].set(f"${state['minimum_wage']:.2f}/hr")
         self.stat_vars["tax"].set(f"{state['tax_rate']:.2f}%")
+        self.stat_vars["streak"].set(
+            f"{state['decision_streak']} turn"
+            f"{'s' if state['decision_streak'] != 1 else ''}")
         self.status.set(f"Turn {state['turn']}")
         self.top_stats.set(
             f"Money  ${state['money']:,}    •    "
@@ -1338,8 +1373,11 @@ class ManagementApp:
                 "payoff": payoff,
             })
         apply_outcome(chosen["outcome"])
+        fatigue_result = apply_decision_fatigue(index)
         passive_turn_effects()
         result = chosen["message"] + "\n\n" + "\n".join(chosen["effects"])
+        if fatigue_result:
+            result += f"\n\n{fatigue_result}"
         self.event_result.configure(text=result)
         self.dashboard_message.configure(text=result)
         self.history.insert(0, f"Turn {state['turn']}: {result}")
